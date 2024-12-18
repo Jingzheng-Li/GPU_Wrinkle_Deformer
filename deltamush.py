@@ -17,7 +17,6 @@ def delta_mush_smooth(mesh, iterations=10, step_size=0.5):
     edges = mesh.edges_unique
 
     # 构建邻接关系：对每个点列出邻居及相应的边长权重
-    # 首先建立点->邻居列表
     num_vertices = len(vertices)
     adjacency_list = [[] for _ in range(num_vertices)]
     edge_lengths = [[] for _ in range(num_vertices)]
@@ -36,7 +35,10 @@ def delta_mush_smooth(mesh, iterations=10, step_size=0.5):
     # 并对每个点的权重归一化，使得所有邻居权重和为 1
     weights = []
     for i in range(num_vertices):
-        inv_lengths = np.array([1.0/l for l in edge_lengths[i]])
+        if len(edge_lengths[i]) == 0:
+            weights.append(np.array([]))
+            continue
+        inv_lengths = np.array([1.0 / l for l in edge_lengths[i]])
         w = inv_lengths / inv_lengths.sum()
         weights.append(w)
     weights = np.array(weights, dtype=object)  # object类型数组，每个元素是不等长的权重列表
@@ -51,6 +53,8 @@ def delta_mush_smooth(mesh, iterations=10, step_size=0.5):
                 # 孤立点，不处理
                 continue
             w = weights[i]
+            if w.size == 0:
+                continue
             neighbor_positions = vertices[nbrs]
             # 加权平均
             avg_pos = (neighbor_positions * w[:, None]).sum(axis=0)
@@ -63,9 +67,17 @@ def delta_mush_smooth(mesh, iterations=10, step_size=0.5):
 
 # 示例用法
 if __name__ == "__main__":
-    # 创建一个简单的三角形网格（或加载自己的网格）
-    # 这里用一个三角面片组成的简单网格作为示例
-    test_mesh = trimesh.load('../Assets/toomuchwrinkle.obj')
-    
-    smoothed_verts = delta_mush_smooth(test_mesh, iterations=2, step_size=0.5)
-    
+    # 加载原始网格
+    input_path = 'Assets/toomuchwrinkle.obj'  # 请确保路径正确
+    test_mesh = trimesh.load(input_path)
+
+    # 应用 Delta Mush 平滑
+    smoothed_verts = delta_mush_smooth(test_mesh, iterations=5, step_size=0.5)
+
+    # 将平滑后的顶点赋值回网格
+    test_mesh.vertices = smoothed_verts
+
+    # 保存平滑后的网格为 OBJ 文件
+    output_path = 'Assets/smoothed_mesh.obj'  # 设定输出路径
+    test_mesh.export(output_path)
+    print(f"平滑后的网格已保存至 {output_path}")
