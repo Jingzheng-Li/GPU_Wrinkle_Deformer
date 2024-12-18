@@ -1,0 +1,9 @@
+{
+    "cmake.sourceDirectory": "/home/jingzheng/Work/CppMine/GPU_Wrinkle_Deformer/GPU_IPC_Deformer",
+    "files.associations": {
+        "*.cpp": "cpp",
+        "*.cu": "cpp",
+        "*.cuh": "cpp",
+        "iterator": "cpp"
+    }
+}
