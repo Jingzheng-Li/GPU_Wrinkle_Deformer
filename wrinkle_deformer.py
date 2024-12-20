@@ -4,12 +4,12 @@ import trimesh
 np.set_printoptions(precision=8, threshold=np.inf, linewidth=200)
 
 class MeshData:
-    def __init__(self, rest_pos, curr_pos, vertex_normals, constraints, stiffness, compressstiffness, lagrange_multipliers, point_mass, faces):
+    def __init__(self, rest_pos, curr_pos, vertex_normals, constraints, stretchstiffness, compressstiffness, lagrange_multipliers, point_mass, faces):
         self.rest_pos = rest_pos
         self.curr_pos = curr_pos
         self.vertex_normals = vertex_normals
         self.constraints = constraints
-        self.stiffness = stiffness
+        self.stretchstiffness = stretchstiffness
         self.compressstiffness = compressstiffness
         self.lagrange_multipliers = lagrange_multipliers
         self.point_mass = point_mass
@@ -91,10 +91,8 @@ def prepare_mesh_data(
     rest_mesh_path, 
     bend_mesh_path, 
     mass, 
-    stiffness, 
+    stretchstiffness, 
     compressstiffness, 
-    constraints_output_path=None, 
-    normals_output_path=None
 ):
     rest_mesh = load_mesh(rest_mesh_path)
     bend_mesh = load_mesh(bend_mesh_path)
@@ -110,7 +108,7 @@ def prepare_mesh_data(
 
     C_total = merged_constraints.shape[0]
 
-    stiffness_array = np.full(C_total, stiffness, dtype=np.float32)
+    stretchstiffness_array = np.full(C_total, stretchstiffness, dtype=np.float32)
     compressstiffness_array = np.full(C_total, compressstiffness, dtype=np.float32)
 
     lagrange_multipliers = np.zeros(C_total, dtype=np.float32)
@@ -127,7 +125,7 @@ def prepare_mesh_data(
         curr_pos=curr_pos,
         vertex_normals=vertex_normals,
         constraints=merged_constraints,
-        stiffness=stiffness_array,
+        stretchstiffness=stretchstiffness_array,
         compressstiffness=compressstiffness_array,
         lagrange_multipliers=lagrange_multipliers,
         point_mass=point_mass,
@@ -136,58 +134,78 @@ def prepare_mesh_data(
 
     return mesh_data
 
-def xpbd_iteration(mesh_data, time_step):
-    
+def xpbd_iteration_loop(mesh_data, time_step):
     rest_pos = mesh_data.rest_pos
-    curr_pos = mesh_data.curr_pos
+    curr_pos = mesh_data.curr_pos.copy()  # 复制当前位置信息
     vertex_normals = mesh_data.vertex_normals
     constraints = mesh_data.constraints
-    stiffness = mesh_data.stiffness
+    stretchstiffness = mesh_data.stretchstiffness
     compressstiffness = mesh_data.compressstiffness
-    lagrange_multipliers = mesh_data.lagrange_multipliers
+    lagrange_multipliers = mesh_data.lagrange_multipliers.copy()  # 复制拉格朗日乘子
     point_mass = mesh_data.point_mass
 
     inv_mass = 1.0 / point_mass
 
-    bend_constraints = constraints[:, 3] == 1
-    edge_constraints = constraints[:, 3] == 0
+    C_total = constraints.shape[0]
 
-    v1 = constraints[:, 0].astype(int)
-    v2 = constraints[:, 1].astype(int)
+    # 初始化位移累积数组
+    dP = np.zeros_like(curr_pos, dtype=np.float32)  # 每个顶点的位移累积
+    dPw = np.zeros(curr_pos.shape[0], dtype=np.float32)  # 每个顶点的权重累积
 
-    p1 = curr_pos[v1]
-    p2 = curr_pos[v2]
+    for i in range(C_total):
+        v1 = int(constraints[i, 0])
+        v2 = int(constraints[i, 1])
+        rest_length = constraints[i, 2]
+        p1 = curr_pos[v1]
+        p2 = curr_pos[v2]
+        n = p2 - p1
+        d = np.linalg.norm(n)
+        if d < 1e-6:
+            continue
+        n /= d  # 归一化向量
 
-    n = p2 - p1
-    d = np.linalg.norm(n, axis=1)
-    mask = d > 1e-6
-    n[mask] /= d[mask][:, np.newaxis]
+        # 确定拉伸或压缩刚度
+        if d < rest_length:
+            k = compressstiffness[i]
+        else:
+            k = stretchstiffness[i]
 
-    rest_length = constraints[:, 2]
-    C = d - rest_length
+        if k < 1e-6:
+            continue
 
-    k = stiffness.copy()
-    k[d < rest_length] = compressstiffness[d < rest_length]
+        alpha = 1.0 / k
+        alpha /= (time_step ** 2)
 
-    alpha = 1.0 / k
-    alpha /= time_step ** 2
+        C = d - rest_length
 
-    wsum = inv_mass[v1] + inv_mass[v2]
+        wsum = inv_mass[v1] + inv_mass[v2]
 
-    epsilon = 1e-8
-    denominator = wsum + alpha
-    denominator = np.where(denominator == 0, epsilon, denominator)
+        denominator = wsum + alpha
+        if denominator == 0.0:
+            denominator = 1e-8  # 防止除零错误
 
-    delta_lambda = (-C - alpha * lagrange_multipliers) / denominator
+        delta_lambda = (-C - alpha * lagrange_multipliers[i]) / denominator
 
-    delta_p1 = inv_mass[v1][:, np.newaxis] * n * (-delta_lambda)[:, np.newaxis]
-    delta_p2 = inv_mass[v2][:, np.newaxis] * n * (delta_lambda)[:, np.newaxis]
+        delta_p1 = inv_mass[v1] * n * (-delta_lambda)
+        delta_p2 = inv_mass[v2] * n * (delta_lambda)
 
-    curr_pos[v1] += delta_p1
-    curr_pos[v2] += delta_p2
+        # 累积位移
+        dP[v1] += delta_p1
+        dP[v2] += delta_p2
 
-    lagrange_multipliers += delta_lambda
+        # 累积权重
+        dPw[v1] += 1.0
+        dPw[v2] += 1.0
 
+        # 更新拉格朗日乘子
+        lagrange_multipliers[i] += delta_lambda
+
+    # 更新所有顶点的位置
+    valid = dPw > 0.0
+    # 为了确保维度匹配，将dPw的维度扩展以进行广播
+    curr_pos[valid] += dP[valid] / dPw[valid, np.newaxis]
+
+    # 更新MeshData中的当前位置和拉格朗日乘子
     mesh_data.curr_pos = curr_pos
     mesh_data.lagrange_multipliers = lagrange_multipliers
 
@@ -195,7 +213,7 @@ def xpbd_iteration(mesh_data, time_step):
 
 def perform_xpbd(mesh_data, iterations, time_step):
     for it in range(iterations):
-        mesh_data = xpbd_iteration(mesh_data, time_step)
+        mesh_data = xpbd_iteration_loop(mesh_data, time_step)
         if it % 10 == 0 or it == iterations - 1:
             print(f"Iteration {it+1}/{iterations} completed.")
     return mesh_data
@@ -210,21 +228,18 @@ if __name__ == "__main__":
             rest_mesh_path,
             bend_mesh_path,
             mass=2.22505e-05,
-            stiffness=10.0,
+            stretchstiffness=10.0,
             compressstiffness=10.0
         )
     except Exception as e:
         print(f"处理网格数据时出错: {e}")
         exit(1)
-    
-    # 按照 distance（第三列，索引为2）排序 merged_constraints，并赋值给新的变量 sorted_constraints
-    sorted_constraints = mesh_data.constraints[mesh_data.constraints[:, 2].argsort()]
-    
-    # 打印排序后的约束
-    print("Sorted Constraints by Distance:")
-    print(sorted_constraints)
 
-    mesh_data = perform_xpbd(mesh_data, iterations=200, time_step=0.0333)
+    # 设定迭代次数和时间步长
+    iterations = 200  # 与OpenCL代码中运行200次一致
+    time_step = 0.033333  # 例如每帧的时间步长
+
+    mesh_data = perform_xpbd(mesh_data, iterations=iterations, time_step=time_step)
 
     try:
         updated_mesh = trimesh.Trimesh(
