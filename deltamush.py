@@ -68,7 +68,7 @@ def delta_mush_smooth(mesh, iterations=10, step_size=0.5):
 # 示例用法
 if __name__ == "__main__":
     # 加载原始网格
-    input_path = 'Assets/toomuchwrinkle.obj'  # 请确保路径正确
+    input_path = 'tempwrinkle_0delta.obj'  # 请确保路径正确
     test_mesh = trimesh.load(input_path)
 
     # 应用 Delta Mush 平滑
@@ -78,6 +78,6 @@ if __name__ == "__main__":
     test_mesh.vertices = smoothed_verts
 
     # 保存平滑后的网格为 OBJ 文件
-    output_path = 'Assets/smoothed_mesh.obj'  # 设定输出路径
+    output_path = 'smoothed_tempwrinkle_0delta.obj'  # 设定输出路径
     test_mesh.export(output_path)
     print(f"平滑后的网格已保存至 {output_path}")
