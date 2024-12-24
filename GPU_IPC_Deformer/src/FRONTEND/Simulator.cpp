@@ -315,6 +315,7 @@ void Simulator::TransformCGALClothtoVector() {
         ctx.simMesh_ptr->triangles = ctx.simMesh_ptr->clothfaces_fuse;
         ctx.instance->getHostNumTriElements() = ctx.simMesh_ptr->numTriElements;
         ctx.instance->getHostNumTriBendEdges() = ctx.simMesh_ptr->triBendEdges.size();
+        ctx.instance->getHostNumTriEdges() = num_edges(ctx.simMesh_ptr->CGAL_clothmesh_fuse);
     } else {
         ctx.instance->getHostNumClothVerts() = 0;
         ctx.instance->getHostNumClothFaces() = 0;
@@ -752,6 +753,8 @@ void Simulator::SimulatorCUDAMalloc() {
         CUDAMallocSafe(ctx.instance->getCudaTriDmInverses(), ctx.simMesh_ptr->numTriElements);
         CUDAMallocSafe(ctx.instance->getCudaTriArea(), ctx.simMesh_ptr->numTriElements);
         CUDAMallocSafe(ctx.instance->getCudaTriElement(), ctx.simMesh_ptr->numTriElements);
+        CUDAMallocSafe(ctx.instance->getCudaTriVerts(), ctx.instance->getHostNumClothVerts());
+        CUDAMallocSafe(ctx.instance->getCudaTriEdges(), ctx.instance->getHostNumTriEdges());
     }
 
 

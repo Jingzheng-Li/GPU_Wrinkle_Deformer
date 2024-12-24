@@ -351,7 +351,7 @@ int getVertNeighbors(
 
 void getSurface(
 	const int numSurfVerts,
-    std::vector<uint3>& surfFaceIds,
+    const std::vector<uint3>& surfFaceIds,
 	std::vector<uint32_t>& surfVertIds,
 	std::vector<uint2>& surfEdgeIds);
 

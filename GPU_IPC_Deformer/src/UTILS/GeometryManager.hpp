@@ -43,6 +43,8 @@ private:
     Scalar3* cudaRestVertPos;
     uint32_t* cudaSortMapIdStoO;
     uint32_t* cudaSortMapIdOtoS;
+    uint2* cudaTriEdges;
+    Scalar3* cudaTriVerts;
     uint3* cudaClothFacesAfterSort;
     uint3* cudaBodyFacesAfterSort;
 
@@ -163,6 +165,7 @@ private:
     uint32_t hostNumSurfEdges;
     uint32_t hostNumSurfFaces;
     uint32_t hostNumTriBendEdges;
+    uint32_t hostNumTriEdges;
     uint32_t hostNumTriElements;
     uint32_t hostNumTetElements;
     uint32_t hostNumSoftTargets;
@@ -275,6 +278,8 @@ public:
     __device__ __host__ inline __MATHUTILS__::Matrix6x6S*& getCudaH6x6() { return cudaH6x6; }
     __device__ __host__ inline __MATHUTILS__::Matrix9x9S*& getCudaH9x9() { return cudaH9x9; }
     __device__ __host__ inline __MATHUTILS__::Matrix12x12S*& getCudaH12x12() { return cudaH12x12; }
+    __device__ __host__ inline Scalar3*& getCudaTriVerts() { return cudaTriVerts; }
+    __device__ __host__ inline uint2*& getCudaTriEdges() { return cudaTriEdges; }
     __device__ __host__ inline uint3*& getCudaClothFacesAfterSort() { return cudaClothFacesAfterSort; }
     __device__ __host__ inline uint3*& getCudaBodyFacesAfterSort() { return cudaBodyFacesAfterSort; }
     __device__ __host__ inline uint3*& getCudaStitchPairsIndex() { return cudaStitchPairsAfterSort; }
@@ -333,6 +338,7 @@ public:
     __device__ __host__ inline uint32_t& getHostNumSurfEdges() { return hostNumSurfEdges; }
     __device__ __host__ inline uint32_t& getHostNumSurfFaces() { return hostNumSurfFaces; }
     __device__ __host__ inline uint32_t& getHostNumTriBendEdges() { return hostNumTriBendEdges; }
+    __device__ __host__ inline uint32_t& getHostNumTriEdges() { return hostNumTriEdges; }
     __device__ __host__ inline uint32_t& getHostNumTriElements() { return hostNumTriElements; }
     __device__ __host__ inline uint32_t& getHostNumTetElements() { return hostNumTetElements; }
     __device__ __host__ inline uint32_t& getHostNumSoftTargets() { return hostNumSoftTargets; }

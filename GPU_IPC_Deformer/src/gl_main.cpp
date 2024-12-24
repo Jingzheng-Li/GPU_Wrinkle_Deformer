@@ -3,7 +3,7 @@
 #include "Simulator.hpp"
 #include "HTTPServer.hpp"
 #include "OpenGLApp.hpp"
-#include "Deformer.hpp"
+#include "Deformer.cuh"
 
 void parse_arguments(int argc, char** argv, SimulationContext& ctx) {
 
