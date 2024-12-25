@@ -1,3 +1,5 @@
+// Deformer.cpp
+
 #include "Deformer.hpp"
 #include "WrinkleDeformer.cuh"
 #include "WrapDeformer.cuh"
@@ -8,10 +10,12 @@
 #include <iostream>
 #include <vector>
 
-// 导出网格函数
+// 导出网格函数（供查看结果）
 static void exportMesh(const std::string& output_path, const MeshData& mesh_data) {
     CGAL_Mesh out_mesh;
-    out_mesh.reserve(mesh_data.curr_pos.size(), mesh_data.faces.size() * 3, mesh_data.faces.size());
+    out_mesh.reserve(mesh_data.curr_pos.size(),
+                     mesh_data.faces.size() * 3,
+                     mesh_data.faces.size());
     std::vector<CGAL_Vertex_index> idx_map;
     idx_map.reserve(mesh_data.curr_pos.size());
     for (const auto& p : mesh_data.curr_pos) {
@@ -25,14 +29,8 @@ static void exportMesh(const std::string& output_path, const MeshData& mesh_data
     }
 }
 
-// Deformer 构造函数
 Deformer::Deformer(SimulationContext& context, Simulator& simulator)
-    : ctx(context), sim(simulator) {}
-
-// 管道函数
-void Deformer::DeformerPipeline() {
-    getHostMesh_CUDA(ctx.instance);
-}
+    : ctx(context), sim(simulator) { }
 
 // 查找弯曲约束对
 static std::vector<Scalar3> findBendPairs(const CGAL_Mesh& mesh) {
@@ -43,13 +41,15 @@ static std::vector<Scalar3> findBendPairs(const CGAL_Mesh& mesh) {
     for (const CGAL_Halfedge_index& h : mesh.halfedges()) {
         CGAL_Face_index fA = face(h, mesh);
         CGAL_Face_index fB = face(opposite(h, mesh), mesh);
-        if (fA == CGAL_Mesh::null_face() || fB == CGAL_Mesh::null_face()) continue;
+        if (fA == CGAL_Mesh::null_face() || fB == CGAL_Mesh::null_face()) 
+            continue;
 
         size_t a = static_cast<size_t>(fA);
         size_t b = static_cast<size_t>(fB);
         if (a > b) std::swap(a, b);
         size_t hash_val = (a << 32) ^ (b & 0xFFFFFFFF);
-        if (visited.find(hash_val) != visited.end()) continue;
+        if (visited.find(hash_val) != visited.end()) 
+            continue;
         visited[hash_val] = true;
 
         std::vector<CGAL_Vertex_index> fa_idx, fb_idx;
@@ -77,20 +77,24 @@ static std::vector<Scalar3> findBendPairs(const CGAL_Mesh& mesh) {
             CGAL_Vertex_index uniqueA, uniqueB;
             for (const auto& va : fa_idx) {
                 if (va != shared[0] && va != shared[1]) {
-                    uniqueA = va; 
+                    uniqueA = va;
                     break;
                 }
             }
             for (const auto& vb : fb_idx) {
                 if (vb != shared[0] && vb != shared[1]) {
-                    uniqueB = vb; 
+                    uniqueB = vb;
                     break;
                 }
             }
             auto pA = mesh.point(uniqueA);
             auto pB = mesh.point(uniqueB);
             Scalar dist = std::sqrt(CGAL::squared_distance(pA, pB));
-            bend_constraints.emplace_back(Scalar3{static_cast<Scalar>(uniqueA), static_cast<Scalar>(uniqueB), dist});
+            bend_constraints.emplace_back(Scalar3{
+                static_cast<Scalar>(uniqueA),
+                static_cast<Scalar>(uniqueB),
+                dist
+            });
         }
     }
     return bend_constraints;
@@ -107,14 +111,20 @@ static std::vector<Scalar3> findUniqueEdgesConstraints(const CGAL_Mesh& mesh) {
         auto p1 = mesh.point(v1);
         auto p2 = mesh.point(v2);
         Scalar dist = std::sqrt(CGAL::squared_distance(p1, p2));
-        edge_constraints.emplace_back(Scalar3{static_cast<Scalar>(v1), static_cast<Scalar>(v2), dist});
+        edge_constraints.emplace_back(Scalar3{
+            static_cast<Scalar>(v1),
+            static_cast<Scalar>(v2),
+            dist
+        });
     }
     return edge_constraints;
 }
 
 // 合并约束
-static std::vector<Scalar3> mergeConstraints(const std::vector<Scalar3>& bend_constraints,
-                                             const std::vector<Scalar3>& edge_constraints) {
+static std::vector<Scalar3> mergeConstraints(
+    const std::vector<Scalar3>& bend_constraints,
+    const std::vector<Scalar3>& edge_constraints
+) {
     std::vector<Scalar3> merged;
     merged.reserve(bend_constraints.size() + edge_constraints.size());
     merged.insert(merged.end(), bend_constraints.begin(), bend_constraints.end());
@@ -122,12 +132,12 @@ static std::vector<Scalar3> mergeConstraints(const std::vector<Scalar3>& bend_co
     return merged;
 }
 
-// 准备网格数据
 void Deformer::prepareMeshData(const std::string& rest_mesh_path,
                                const std::string& bend_mesh_path,
                                Scalar mass,
                                Scalar stretchStiffness,
-                               Scalar compressStiffness) {
+                               Scalar compressStiffness)
+{
     CGAL_Mesh rest_mesh, bend_mesh;
     if (!LOADMESH::CGAL_readObj(rest_mesh_path, rest_mesh) ||
         !LOADMESH::CGAL_readObj(bend_mesh_path, bend_mesh)) {
@@ -136,20 +146,26 @@ void Deformer::prepareMeshData(const std::string& rest_mesh_path,
     }
     mesh_data_.rest_pos.reserve(num_vertices(rest_mesh));
     mesh_data_.curr_pos.reserve(num_vertices(rest_mesh));
+
     for (const CGAL_Vertex_index& v : rest_mesh.vertices()) {
         mesh_data_.rest_pos.emplace_back(rest_mesh.point(v));
     }
     for (const CGAL_Vertex_index& v : bend_mesh.vertices()) {
         mesh_data_.curr_pos.emplace_back(bend_mesh.point(v));
     }
-    auto bend_constraints = findBendPairs(rest_mesh);
-    auto edge_constraints = findUniqueEdgesConstraints(rest_mesh);
+
+    // 构造约束
+    auto bend_constraints  = findBendPairs(rest_mesh);
+    auto edge_constraints  = findUniqueEdgesConstraints(rest_mesh);
     auto merged_constraints = mergeConstraints(bend_constraints, edge_constraints);
     mesh_data_.constraints = merged_constraints;
-    mesh_data_.stretch_stiffness = stretchStiffness;
+
+    mesh_data_.stretch_stiffness  = stretchStiffness;
     mesh_data_.compress_stiffness = compressStiffness;
     mesh_data_.lagrange_multipliers.resize(merged_constraints.size(), 0.0);
     mesh_data_.point_mass.resize(num_vertices(rest_mesh), mass);
+
+    // faces
     for (const CGAL_Face_index& f : rest_mesh.faces()) {
         std::vector<int> indices;
         indices.reserve(3);
@@ -158,17 +174,23 @@ void Deformer::prepareMeshData(const std::string& rest_mesh_path,
             indices.push_back(static_cast<int>(rest_mesh.target(h)));
             h = rest_mesh.next(h);
         }
-        mesh_data_.faces.emplace_back(uint3{static_cast<unsigned>(indices[0]),
-                                           static_cast<unsigned>(indices[1]),
-                                           static_cast<unsigned>(indices[2])});
+        mesh_data_.faces.emplace_back(uint3{
+            static_cast<unsigned>(indices[0]),
+            static_cast<unsigned>(indices[1]),
+            static_cast<unsigned>(indices[2])
+        });
     }
 }
 
-// 获取并处理主机网格到 CUDA
 void Deformer::getHostMesh_CUDA(std::unique_ptr<GeometryManager>& instance) {
     std::string rest_mesh_path  = "../Assets/tubemesh.obj";
     std::string bend_mesh_path  = "../Assets/tubemesh_bend.obj";
-    prepareMeshData(rest_mesh_path, bend_mesh_path, 2.22505e-5, 10.0, 10.0);
+    // 这里演示，给定一些参数
+    prepareMeshData(rest_mesh_path, bend_mesh_path, 
+                    2.22505e-5, /* mass */
+                    10.0,       /* stretchStiffness */
+                    10.0        /* compressStiffness */
+    );
 
     int nv = static_cast<int>(mesh_data_.curr_pos.size());
     int nc = static_cast<int>(mesh_data_.constraints.size());
@@ -210,24 +232,21 @@ void Deformer::getHostMesh_CUDA(std::unique_ptr<GeometryManager>& instance) {
     }
 
     // 设备指针
-    Scalar3* d_curr_pos          = nullptr;
-    Scalar3* d_constraints       = nullptr;
-    Scalar*  d_stretch_stiff     = nullptr;   // 已移除
-    Scalar*  d_compress_stiff    = nullptr;   // 已移除
-    Scalar*  d_lambda            = nullptr;
-    Scalar*  d_masses            = nullptr;
-    Scalar3* d_dP                = nullptr;
-    Scalar*  d_dPw               = nullptr;
+    Scalar3* d_curr_pos     = nullptr;
+    Scalar3* d_constraints  = nullptr;
+    Scalar*  d_lambda       = nullptr;
+    Scalar*  d_masses       = nullptr;
+    Scalar3* d_dP           = nullptr;
+    Scalar*  d_dPw          = nullptr;
 
-    // 分配设备内存（移除 stretch 和 compress 刚度）
-    cudaMalloc(&d_curr_pos,       nv * sizeof(Scalar3));
-    cudaMalloc(&d_constraints,    nc * sizeof(Scalar3));
-    cudaMalloc(&d_lambda,         nc * sizeof(Scalar));
-    cudaMalloc(&d_masses,         nv * sizeof(Scalar));
-    cudaMalloc(&d_dP,             nv * sizeof(Scalar3));
-    cudaMalloc(&d_dPw,            nv * sizeof(Scalar));
+    cudaMalloc(&d_curr_pos,     nv * sizeof(Scalar3));
+    cudaMalloc(&d_constraints,  nc * sizeof(Scalar3));
+    cudaMalloc(&d_lambda,       nc * sizeof(Scalar));
+    cudaMalloc(&d_masses,       nv * sizeof(Scalar));
+    cudaMalloc(&d_dP,           nv * sizeof(Scalar3));
+    cudaMalloc(&d_dPw,          nv * sizeof(Scalar));
 
-    // 拷贝数据到设备
+    // 拷贝数据
     std::vector<Scalar3> h_curr_pos(nv);
     for (int i = 0; i < nv; i++) {
         h_curr_pos[i].x = mesh_data_.curr_pos[i].x();
@@ -242,8 +261,10 @@ void Deformer::getHostMesh_CUDA(std::unique_ptr<GeometryManager>& instance) {
     }
     cudaMemcpy(d_constraints, h_constraints.data(), nc * sizeof(Scalar3), cudaMemcpyHostToDevice);
 
-    cudaMemcpy(d_lambda,         mesh_data_.lagrange_multipliers.data(), nc * sizeof(Scalar), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_masses,         mesh_data_.point_mass.data(),           nv * sizeof(Scalar), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_lambda, mesh_data_.lagrange_multipliers.data(),
+               nc * sizeof(Scalar), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_masses, mesh_data_.point_mass.data(),
+               nv * sizeof(Scalar), cudaMemcpyHostToDevice);
 
     cudaMemset(d_dP,  0, nv * sizeof(Scalar3));
     cudaMemset(d_dPw, 0, nv * sizeof(Scalar));
@@ -253,17 +274,19 @@ void Deformer::getHostMesh_CUDA(std::unique_ptr<GeometryManager>& instance) {
     int* d_adjacencyOwners = nullptr;
     int* d_adjStart        = nullptr;
     int* d_adjCount        = nullptr;
-
     cudaMalloc(&d_adjacency,       adjacency_indices.size() * sizeof(int));
     cudaMalloc(&d_adjacencyOwners, adjacency_owners.size()  * sizeof(int));
     cudaMalloc(&d_adjStart,        nv * sizeof(int));
     cudaMalloc(&d_adjCount,        nv * sizeof(int));
 
-    cudaMemcpy(d_adjacency,       adjacency_indices.data(), adjacency_indices.size() * sizeof(int), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_adjacencyOwners, adjacency_owners.data(),  adjacency_owners.size()  * sizeof(int), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_adjStart,        adjacency_start.data(),   nv * sizeof(int),         cudaMemcpyHostToDevice);
-    cudaMemcpy(d_adjCount,        adjacency_count.data(),   nv * sizeof(int),         cudaMemcpyHostToDevice);
-
+    cudaMemcpy(d_adjacency, adjacency_indices.data(),
+               adjacency_indices.size() * sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_adjacencyOwners, adjacency_owners.data(),
+               adjacency_owners.size()  * sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_adjStart, adjacency_start.data(),
+               nv * sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_adjCount, adjacency_count.data(),
+               nv * sizeof(int), cudaMemcpyHostToDevice);
 
     size_t total_edges = adjacency_indices.size();
     Scalar* d_rawWeights = nullptr;
@@ -280,44 +303,47 @@ void Deformer::getHostMesh_CUDA(std::unique_ptr<GeometryManager>& instance) {
     cudaMalloc(&d_newPositions, nv * sizeof(Scalar3));
     cudaMemset(d_newPositions, 0, nv * sizeof(Scalar3));
 
-    // 设置迭代参数
+    // 迭代参数
     int xpbd_iters = 200;
     Scalar dt = 0.033333;
 
-    // 创建 CUDA 事件用于计时
+    // CUDA 事件用于计时
     cudaEvent_t start, stop;
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
 
-    // XPBD 迭代计时
+    // --------- XPBD 使用 cooperative 优化 ----------
     cudaEventRecord(start);
-    for (int it = 0; it < xpbd_iters; ++it) {
-        __DEFORMER__::xpbdIterationLoopCUDA(
-            d_curr_pos, 
-            d_constraints, 
-            mesh_data_.stretch_stiffness, 
-            mesh_data_.compress_stiffness,
-            d_lambda, 
-            d_masses,
-            d_dP, 
-            d_dPw, 
-            nc, 
-            nv, 
-            dt
-        );
-    }
+
+    // 使用新的 cooperative 版本，一次kernel内部循环 xpbd_iters 次
+    __DEFORMER__::xpbdIterationAllInOneGPU_Cooperative(
+        d_curr_pos,
+        d_constraints,
+        mesh_data_.stretch_stiffness,
+        mesh_data_.compress_stiffness,
+        d_lambda,
+        d_masses,
+        d_dP,
+        d_dPw,
+        nc,
+        nv,
+        dt,
+        xpbd_iters
+    );
+
     cudaEventRecord(stop);
     cudaEventSynchronize(stop);
     float wrinkleTime;
     cudaEventElapsedTime(&wrinkleTime, start, stop);
-    std::cout << "xpbdIterationLoopCUDA 时间: " << wrinkleTime << " ms" << std::endl;
+    std::cout << "[Cooperative] xpbdIterationAllInOneGPU 时间: "
+              << wrinkleTime << " ms" << std::endl;
 
-
-    // deltaMush 综合函数计时
+    // --------- deltaMush 综合函数 ----------
     cudaEventRecord(start);
     __DEFORMER__::deltaMushAllInOneGPU(
         d_curr_pos, d_newPositions,
-        d_adjacencyOwners, d_adjacency, d_adjStart, d_adjCount,
+        d_adjacencyOwners, d_adjacency,
+        d_adjStart, d_adjCount,
         d_rawWeights, d_weights, d_sumW,
         static_cast<int>(total_edges), nv,
         0.5, 2
@@ -328,15 +354,21 @@ void Deformer::getHostMesh_CUDA(std::unique_ptr<GeometryManager>& instance) {
     cudaEventElapsedTime(&deltaTime, start, stop);
     std::cout << "deltaMushAllInOneGPU 时间: " << deltaTime << " ms" << std::endl;
 
-
-    // 拷贝回主机
-    cudaMemcpy(h_curr_pos.data(), d_curr_pos, nv * sizeof(Scalar3), cudaMemcpyDeviceToHost);
+    // 拷回主机
+    cudaMemcpy(h_curr_pos.data(), d_curr_pos, 
+               nv * sizeof(Scalar3), cudaMemcpyDeviceToHost);
     for (int i = 0; i < nv; i++) {
-        mesh_data_.curr_pos[i] = CGAL_Point_3(h_curr_pos[i].x, h_curr_pos[i].y, h_curr_pos[i].z);
+        mesh_data_.curr_pos[i] = CGAL_Point_3(
+            h_curr_pos[i].x,
+            h_curr_pos[i].y,
+            h_curr_pos[i].z
+        );
     }
+
+    // 导出结果
     exportMesh("../Assets/tubemesh_deformed_gpuNoCopy.obj", mesh_data_);
 
-    // 释放设备内存
+    // 释放
     cudaFree(d_newPositions);
     cudaFree(d_rawWeights);
     cudaFree(d_weights);
@@ -351,4 +383,8 @@ void Deformer::getHostMesh_CUDA(std::unique_ptr<GeometryManager>& instance) {
     cudaFree(d_masses);
     cudaFree(d_dP);
     cudaFree(d_dPw);
+}
+
+void Deformer::DeformerPipeline() {
+    getHostMesh_CUDA(ctx.instance);
 }

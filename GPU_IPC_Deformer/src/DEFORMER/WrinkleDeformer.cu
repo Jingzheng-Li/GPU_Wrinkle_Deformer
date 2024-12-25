@@ -1,129 +1,160 @@
+// WrinkleDeformer.cu
+
 #include "WrinkleDeformer.cuh"
-#include <cuda_runtime.h>
-#include <cmath>
+#include <cooperative_groups.h>
+namespace cg = cooperative_groups;
 
 namespace __DEFORMER__ {
 
-// -------------------- XPBD 核心 --------------------
+// -------------------- Cooperative 版本 XPBD --------------------
 
-// XPBD 约束求解核
-__global__ void xpbdConstraintKernel(
-    Scalar3* d_curr_pos, 
-    Scalar3* d_constraints,
-    Scalar    stretch_stiff,
-    Scalar    compress_stiff,
-    Scalar*  d_lambda,
-    Scalar*  d_masses,
-    Scalar3* d_dP,
-    Scalar*  d_dPw,
-    int      nc,
-    Scalar   dt
+__global__ void xpbdIterationCooperativeKernel(
+    Scalar3* __restrict__ d_curr_pos,
+    const Scalar3* __restrict__ d_constraints,
+    Scalar  stretch_stiff,
+    Scalar  compress_stiff,
+    Scalar* __restrict__ d_lambda,
+    const Scalar* __restrict__ d_masses,
+    Scalar3* __restrict__ d_dP,
+    Scalar*  __restrict__ d_dPw,
+    int nc,
+    int nv,
+    Scalar dt,
+    int xpbd_iters
 ) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= nc) return;
+    cg::grid_group grid = cg::this_grid();
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
 
-    Scalar3 c = d_constraints[idx];
-    int v1 = static_cast<int>(c.x);
-    int v2 = static_cast<int>(c.y);
-    Scalar rest_len = c.z;
+    for(int iter = 0; iter < xpbd_iters; ++iter) {
 
-    Scalar3 p1 = d_curr_pos[v1];
-    Scalar3 p2 = d_curr_pos[v2];
+        // ---- 1) 约束求解阶段 ----
+        if(tid < nc) {
+            Scalar3 c = d_constraints[tid];
+            int v1 = static_cast<int>(c.x);
+            int v2 = static_cast<int>(c.y);
+            Scalar rest_len = c.z;
 
-    Scalar3 dir = {p2.x - p1.x, p2.y - p1.y, p2.z - p1.z};
-    Scalar length = sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
-    if (length < 1e-12) return;
-    dir.x /= length;
-    dir.y /= length;
-    dir.z /= length;
+            Scalar3 p1 = d_curr_pos[v1];
+            Scalar3 p2 = d_curr_pos[v2];
 
-    // 使用全局刚度
-    Scalar stiffness = (length < rest_len) ? compress_stiff : stretch_stiff;
-    if (stiffness < 1e-12) return;
+            Scalar3 dir = {
+                p2.x - p1.x,
+                p2.y - p1.y,
+                p2.z - p1.z
+            };
+            Scalar lengthSq = dir.x*dir.x + dir.y*dir.y + dir.z*dir.z;
+            if (lengthSq > 1e-24) {
+                Scalar length = sqrt(lengthSq);
+                dir.x /= length;
+                dir.y /= length;
+                dir.z /= length;
 
-    Scalar alpha = (1.0 / stiffness) / (dt * dt);
-    Scalar C = length - rest_len;
+                Scalar stiffness = (length < rest_len) ? compress_stiff : stretch_stiff;
+                if (stiffness > 1e-12) {
+                    Scalar alpha = (1.0 / stiffness) / (dt * dt);
+                    Scalar C = length - rest_len;
 
-    // 计算逆质量
-    Scalar mass_v1 = d_masses[v1];
-    Scalar mass_v2 = d_masses[v2];
-    Scalar w1 = (mass_v1 == 0.0) ? 0.0 : (1.0 / mass_v1);
-    Scalar w2 = (mass_v2 == 0.0) ? 0.0 : (1.0 / mass_v2);
+                    Scalar mass_v1 = d_masses[v1];
+                    Scalar mass_v2 = d_masses[v2];
+                    Scalar w1 = (mass_v1 == 0.0) ? 0.0 : (1.0 / mass_v1);
+                    Scalar w2 = (mass_v2 == 0.0) ? 0.0 : (1.0 / mass_v2);
 
-    Scalar denom = w1 + w2 + alpha;
-    if (fabs(denom) < 1e-12) denom = 1e-12;
+                    Scalar denom = w1 + w2 + alpha;
+                    if (fabs(denom) < 1e-12) denom = 1e-12;
 
-    Scalar old_lambda = d_lambda[idx];
-    Scalar delta_lambda = (-C - alpha * old_lambda) / denom;
-    Scalar new_lambda = old_lambda + delta_lambda;
-    d_lambda[idx] = new_lambda;
+                    Scalar old_lambda  = d_lambda[tid];
+                    Scalar delta_lambda = (-C - alpha * old_lambda) / denom;
+                    Scalar new_lambda   = old_lambda + delta_lambda;
+                    d_lambda[tid] = new_lambda;
 
-    Scalar3 dp1 = {-delta_lambda * w1 * dir.x, 
-                   -delta_lambda * w1 * dir.y, 
-                   -delta_lambda * w1 * dir.z};
-    Scalar3 dp2 = { delta_lambda * w2 * dir.x, 
-                    delta_lambda * w2 * dir.y, 
-                    delta_lambda * w2 * dir.z};
+                    Scalar3 dp1 = {
+                        -delta_lambda * w1 * dir.x,
+                        -delta_lambda * w1 * dir.y,
+                        -delta_lambda * w1 * dir.z
+                    };
+                    Scalar3 dp2 = {
+                         delta_lambda * w2 * dir.x,
+                         delta_lambda * w2 * dir.y,
+                         delta_lambda * w2 * dir.z
+                    };
 
-    atomicAdd(&d_dP[v1].x, dp1.x);
-    atomicAdd(&d_dP[v1].y, dp1.y);
-    atomicAdd(&d_dP[v1].z, dp1.z);
+                    atomicAdd(&d_dP[v1].x, dp1.x);
+                    atomicAdd(&d_dP[v1].y, dp1.y);
+                    atomicAdd(&d_dP[v1].z, dp1.z);
 
-    atomicAdd(&d_dP[v2].x, dp2.x);
-    atomicAdd(&d_dP[v2].y, dp2.y);
-    atomicAdd(&d_dP[v2].z, dp2.z);
+                    atomicAdd(&d_dP[v2].x, dp2.x);
+                    atomicAdd(&d_dP[v2].y, dp2.y);
+                    atomicAdd(&d_dP[v2].z, dp2.z);
 
-    atomicAdd(&d_dPw[v1], 1.0);
-    atomicAdd(&d_dPw[v2], 1.0);
-}
+                    atomicAdd(&d_dPw[v1], 1.0);
+                    atomicAdd(&d_dPw[v2], 1.0);
+                }
+            }
+        }
 
-// XPBD 更新位置核
-__global__ void xpbdUpdatePositionKernel(
-    Scalar3* d_curr_pos,
-    Scalar3* d_dP,
-    Scalar*  d_dPw,
-    int      nv
-) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= nv) return;
+        // 全网格同步，以确保所有约束都更新完 d_dP/d_dPw
+        grid.sync();
 
-    Scalar w = d_dPw[idx];
-    if (w > 1e-12) {
-        Scalar invw = 1.0 / w;
-        d_curr_pos[idx].x += d_dP[idx].x * invw;
-        d_curr_pos[idx].y += d_dP[idx].y * invw;
-        d_curr_pos[idx].z += d_dP[idx].z * invw;
+        // ---- 2) 更新顶点位置阶段 ----
+        if(tid < nv) {
+            Scalar w = d_dPw[tid];
+            if (w > 1e-12) {
+                Scalar invw = 1.0 / w;
+                d_curr_pos[tid].x += d_dP[tid].x * invw;
+                d_curr_pos[tid].y += d_dP[tid].y * invw;
+                d_curr_pos[tid].z += d_dP[tid].z * invw;
+            }
+            d_dP[tid]  = {0.0, 0.0, 0.0};
+            d_dPw[tid] = 0.0;
+        }
+
+        // 再次同步，确保所有顶点都更新完
+        grid.sync();
     }
-    d_dP[idx]  = {0.0, 0.0, 0.0};
-    d_dPw[idx] = 0.0;
 }
 
-// XPBD 迭代循环函数
-void xpbdIterationLoopCUDA(
+// 封装 cooperative 版本的 XPBD 接口
+void xpbdIterationAllInOneGPU_Cooperative(
     Scalar3* d_curr_pos,
     Scalar3* d_constraints,
-    Scalar    stretch_stiff,
-    Scalar    compress_stiff,
+    Scalar   stretch_stiff,
+    Scalar   compress_stiff,
     Scalar*  d_lambda,
     Scalar*  d_masses,
     Scalar3* d_dP,
     Scalar*  d_dPw,
     int      nc,
     int      nv,
-    Scalar   dt
+    Scalar   dt,
+    int      xpbd_iters
 ) {
-    int blockSize = 256;
+    // 根据约束数/顶点数找一个覆盖范围更大的
+    int maxN = (nc > nv) ? nc : nv;
+    const unsigned int threadNum = DEFAULT_THREADS_PERBLOCK;
+    int gridSize  = (maxN + threadNum - 1) / threadNum;
 
-    int gridC = (nc + blockSize - 1) / blockSize;
-    xpbdConstraintKernel<<<gridC, blockSize>>>(
-        d_curr_pos, d_constraints,
-        stretch_stiff, compress_stiff,
-        d_lambda, d_masses, 
-        d_dP, d_dPw, nc, dt
+    // 传递参数给 cooperative kernel
+    void* kernelArgs[] = {
+        (void*)&d_curr_pos,
+        (void*)&d_constraints,
+        (void*)&stretch_stiff,
+        (void*)&compress_stiff,
+        (void*)&d_lambda,
+        (void*)&d_masses,
+        (void*)&d_dP,
+        (void*)&d_dPw,
+        (void*)&nc,
+        (void*)&nv,
+        (void*)&dt,
+        (void*)&xpbd_iters
+    };
+
+    // 启动 cooperative kernel
+    cudaLaunchCooperativeKernel(
+        (void*)xpbdIterationCooperativeKernel,
+        dim3(gridSize), dim3(threadNum),
+        kernelArgs
     );
-
-    int gridV = (nv + blockSize - 1) / blockSize;
-    xpbdUpdatePositionKernel<<<gridV, blockSize>>>(d_curr_pos, d_dP, d_dPw, nv);
     cudaDeviceSynchronize();
 }
 
@@ -195,7 +226,11 @@ __global__ void deltaMushKernel(
         sum_vec.z += d_positions[nb].z * w;
     }
     Scalar3 pi = d_positions[i];
-    Scalar3 diff = {sum_vec.x - pi.x, sum_vec.y - pi.y, sum_vec.z - pi.z};
+    Scalar3 diff = {
+        sum_vec.x - pi.x,
+        sum_vec.y - pi.y,
+        sum_vec.z - pi.z
+    };
     d_newPositions[i] = {
         pi.x + diff.x * stepSize,
         pi.y + diff.y * stepSize,
@@ -219,12 +254,12 @@ void deltaMushAllInOneGPU(
     double     stepSize,
     int        iterations
 ) {
-    int blockSize = 256;
-    int gridEdges = (totalEdges + blockSize - 1) / blockSize;
-    int gridVerts = (nv + blockSize - 1) / blockSize;
+    const unsigned int threadNum = DEFAULT_THREADS_PERBLOCK;
+    int gridEdges = (totalEdges + threadNum - 1) / threadNum;
+    int gridVerts = (nv + threadNum - 1) / threadNum;
 
     // 计算原始权重
-    computeRawWeightsKernel<<<gridEdges, blockSize>>>(
+    computeRawWeightsKernel<<<gridEdges, threadNum>>>(
         d_positions, d_adjacencyOwners, d_adjacency,
         d_rawWeights, d_sumW,
         totalEdges
@@ -232,14 +267,14 @@ void deltaMushAllInOneGPU(
     cudaDeviceSynchronize();
 
     // 归一化权重
-    normalizeWeightsKernel<<<gridEdges, blockSize>>>(
+    normalizeWeightsKernel<<<gridEdges, threadNum>>>(
         d_rawWeights, d_weights, d_sumW, d_adjacencyOwners, totalEdges
     );
     cudaDeviceSynchronize();
 
     // 进行多次平滑迭代
     for (int it = 0; it < iterations; ++it) {
-        deltaMushKernel<<<gridVerts, blockSize>>>(
+        deltaMushKernel<<<gridVerts, threadNum>>>(
             d_positions, d_newPositions,
             d_adjacency, d_weights,
             d_adjStart, d_adjCount,
@@ -247,9 +282,9 @@ void deltaMushAllInOneGPU(
         );
         cudaDeviceSynchronize();
         // 交换位置指针
-        Scalar3* tmp = d_positions;
-        d_positions  = d_newPositions;
-        d_newPositions = tmp;
+        Scalar3* tmp       = d_positions;
+        d_positions        = d_newPositions;
+        d_newPositions     = tmp;
     }
 }
 
