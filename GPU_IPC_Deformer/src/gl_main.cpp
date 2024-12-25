@@ -3,7 +3,7 @@
 #include "Simulator.hpp"
 #include "HTTPServer.hpp"
 #include "OpenGLApp.hpp"
-#include "Deformer.cuh"
+#include "Deformer.hpp"
 
 void parse_arguments(int argc, char** argv, SimulationContext& ctx) {
 
@@ -25,7 +25,7 @@ void parse_arguments(int argc, char** argv, SimulationContext& ctx) {
 
 
 #if defined(GPUIPC_DEFORMER)
-    ctx.assets_dir_clothmesh = std::filesystem::path("../../Assets/");
+    ctx.assets_dir_clothmesh = std::filesystem::path("../Assets/");
     ctx.clothmeshname = "tubemesh";
 #endif
 
