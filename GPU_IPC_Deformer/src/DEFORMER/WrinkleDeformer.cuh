@@ -1,61 +1,54 @@
 #pragma once
-
-#include "MathUtils.cuh"  // 假设里头定义了 Scalar, Scalar3
+#include "MathUtils.cuh"
 #include <cuda_runtime.h>
 
 namespace __DEFORMER__ {
 
-/// GPU 端约束
-struct ConstraintGPU {
-    int    v1;
-    int    v2;
-    Scalar restLength;
-    Scalar ctype; 
-};
-
-// ======== 原有声明：计算 invMass, XPBD, DeltaMushSmoothGPU... ========
-
-void launchComputeInvMassKernel(const Scalar* d_masses, Scalar* d_inv_mass, int nv);
-
+/**
+ * XPBD 迭代：在每个约束上做一次解算，再更新顶点位置。
+ * @param d_curr_pos:        顶点当前坐标
+ * @param d_constraints:     每个约束 (v1, v2, restLength)
+ * @param stretch_stiff:     全局拉伸刚度
+ * @param compress_stiff:    全局压缩刚度
+ * @param d_lambda:          XPBD 的拉格朗日乘子数组
+ * @param d_masses:          每个顶点的质量 (数组)
+ * @param d_dP:              写回的累加位移
+ * @param d_dPw:             写回的累加权重
+ * @param nc:                约束数
+ * @param nv:                顶点数
+ * @param dt:                时间步
+ */
 void xpbdIterationLoopCUDA(
     Scalar3* d_curr_pos,
-    ConstraintGPU* d_constraints,
-    Scalar* d_stretch_stiffness,
-    Scalar* d_compress_stiffness,
-    Scalar* d_lambda,
-    Scalar* d_inv_mass,
+    Scalar3* d_constraints,
+    Scalar    stretch_stiff,
+    Scalar    compress_stiff,
+    Scalar*  d_lambda,
+    Scalar*  d_masses,
     Scalar3* d_dP,
     Scalar*  d_dPw,
-    int nc,
-    int nv,
-    Scalar time_step
+    int      nc,
+    int      nv,
+    Scalar   dt
 );
 
-void deltaMushSmoothGPU(
+/**
+ * deltaMush 平滑 + 权重计算的综合函数
+ */
+void deltaMushAllInOneGPU(
     Scalar3* d_positions,
     Scalar3* d_newPositions,
-    int*    d_adjacency,
-    Scalar* d_weights,
-    int*    d_adjStart,
-    int*    d_adjCount,
-    int     nv,
-    Scalar  step_size,
-    int     iterations
-);
-
-// ======== 新增封装函数: computeDeltaMushWeights(...) ========
-// 它在内部做两件事：
-//   1) 调用 kernel 计算 dist 并原子加到 sumW
-//   2) 调用 kernel 做归一化
-void computeDeltaMushWeights(
-    const Scalar3* d_positions,
-    const int*     d_adjacencyOwner,
-    const int*     d_adjacency,
-    Scalar*        d_rawWeights,
-    Scalar*        d_weights,
-    Scalar*        d_sumW,
-    int            totalEdges,
-    int            nv
+    const int* d_adjacencyOwners,
+    const int* d_adjacency,
+    const int* d_adjStart,
+    const int* d_adjCount,
+    Scalar*    d_rawWeights,
+    Scalar*    d_weights,
+    Scalar*    d_sumW,
+    int        totalEdges,
+    int        nv,
+    double     stepSize,      // 改为 double
+    int        iterations
 );
 
 } // namespace __DEFORMER__
