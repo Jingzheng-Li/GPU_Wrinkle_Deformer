@@ -4,11 +4,16 @@
 #include "WrinkleDeformer.cuh"
 #include "WrapDeformer.cuh"
 
+
+
 #include <unordered_map>
 #include <unordered_set>
 #include <cmath>
 #include <iostream>
 #include <vector>
+
+
+
 
 // 导出网格函数（供查看结果）
 static void exportMesh(const std::string& output_path, const MeshData& mesh_data) {
@@ -132,6 +137,47 @@ static std::vector<Scalar3> mergeConstraints(
     return merged;
 }
 
+
+
+
+
+
+
+
+
+#include <nanovdb/NanoVDB.h>
+#include <nanovdb/tools/CreateNanoGrid.h>
+#include <nanovdb/util/cuda/CudaDeviceBuffer.h>
+#include <nanovdb/tools/CreatePrimitives.h>
+#include <nanovdb/tools/CreateNanoGrid.h>
+#include <nanovdb/util/CreateNanoGrid.h> // converter from OpenVDB to NanoVDB (includes NanoVDB.h and GridManager.h)
+#include <nanovdb/util/IO.h>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#include <openvdb/openvdb.h>
+#include <openvdb/tools/LevelSetSphere.h>
+#include <openvdb/tools/MeshToVolume.h>
+#include <openvdb/tools/LevelSetSphere.h> // replace with your own dependencies for generating the OpenVDB grid
+
+
+
+
 void Deformer::prepareMeshData(const std::string& rest_mesh_path,
                                const std::string& bend_mesh_path,
                                Scalar mass,
@@ -144,6 +190,7 @@ void Deformer::prepareMeshData(const std::string& rest_mesh_path,
         std::cerr << "Load obj failed\n";
         return;
     }
+
     mesh_data_.rest_pos.reserve(num_vertices(rest_mesh));
     mesh_data_.curr_pos.reserve(num_vertices(rest_mesh));
 
@@ -180,11 +227,102 @@ void Deformer::prepareMeshData(const std::string& rest_mesh_path,
             static_cast<unsigned>(indices[2])
         });
     }
+
+
+
+
+
+
+
+
+    //---------------------------------------------------------------------
+    // 下面是将 mesh_data_ 转换为 VDB 并保存的示例代码
+    //---------------------------------------------------------------------
+    // 如果在程序主入口处没调用过 openvdb::initialize()，需要先初始化
+    openvdb::initialize();
+
+    // 1. 准备好用于 OpenVDB 的顶点和面数据
+    std::vector<openvdb::Vec3s> vdbPoints;
+    vdbPoints.reserve(mesh_data_.rest_pos.size());
+    for (const auto& p : mesh_data_.rest_pos) {
+        // CGAL_Point_3 通常可通过 .x(), .y(), .z() 获取坐标
+        float x = static_cast<float>(p.x());
+        float y = static_cast<float>(p.y());
+        float z = static_cast<float>(p.z());
+        vdbPoints.emplace_back(openvdb::Vec3s{x, y, z});
+    }
+
+    std::vector<openvdb::Vec3I> vdbTriangles;
+    vdbTriangles.reserve(mesh_data_.faces.size());
+    for (auto& f : mesh_data_.faces) {
+        // f 是一个 uint3，可用 f.x, f.y, f.z 访问
+        vdbTriangles.emplace_back(openvdb::Vec3I(f.x, f.y, f.z));
+    }
+
+    // 2. 使用 meshToSignedDistanceField 或 meshToVolume 构建 SDF Grid
+    //    一般流程：
+    //       - 创建一个 transform (可以根据实际需求调整体素大小)
+    //       - 调用 meshToSignedDistanceField 生成网格
+    //
+    // 这里使用 meshToSignedDistanceField 生成一个 LevelSet (FloatGrid)
+    openvdb::math::Transform::Ptr transform = openvdb::math::Transform::createLinearTransform(/*voxel size*/ 0.01);
+    openvdb::FloatGrid::Ptr sdfGrid = openvdb::tools::meshToSignedDistanceField<openvdb::FloatGrid>(
+        *transform,           // 网格对应的变换
+        vdbPoints,            // 顶点数组
+        vdbTriangles,         // 面片（triangle）数组
+        /*exteriorWidth*/ 3.0, // 网格外部可生成的狭窄带宽度（可根据需要调整）
+        /*interiorWidth*/ 3.0, // 网格内部可生成的狭窄带宽度（可根据需要调整）
+        /*flags*/ openvdb::tools::SIGNED_DISTANCE_FIELD // 以 SDF 的模式生成
+    );
+
+    // 可选：设置一个名字，便于后续在文件中区分
+    sdfGrid->setName("MyMeshSDF");
+
+    // 3. 将生成的 VDB Grid 写出到文件
+    {
+        openvdb::io::File vdbFile("output.vdb");
+        openvdb::GridPtrVec grids;
+        grids.push_back(sdfGrid);
+        vdbFile.write(grids);
+        vdbFile.close();
+    }
+
+    // 这样就完成了从 OBJ -> OpenVDB -> 保存 .vdb 文件的全过程
+
+
+
+
+
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 void Deformer::getHostMesh_CUDA(std::unique_ptr<GeometryManager>& instance) {
     std::string rest_mesh_path  = "../Assets/tubemesh.obj";
     std::string bend_mesh_path  = "../Assets/tubemesh_bend.obj";
+    std::string collide_mesh_path = "../Assets/collidemesh.obj";
+
+
     // 这里演示，给定一些参数
     prepareMeshData(rest_mesh_path, bend_mesh_path, 
                     2.22505e-5, /* mass */

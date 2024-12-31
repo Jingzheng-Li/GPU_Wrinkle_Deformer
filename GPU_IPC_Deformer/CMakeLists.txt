@@ -12,17 +12,8 @@ if (NOT CMAKE_BUILD_TYPE)
 endif()
 
 # 让 CMake 优先使用带有 Config 模式的包（比如 vcpkg 安装的）
-# 而不是系统 /usr/lib/cmake 下带 Module 模式的老旧包。
 set(CMAKE_FIND_PACKAGE_PREFER_CONFIG ON)
 
-# 如有必要，手动指定 freeglut 的目录，强制使用 vcpkg 安装位置
-# （可在 vcpkg install freeglut 后验证 exact 路径）
-# set(freeglut_DIR "/home/jingzheng/Public/Vcpkg/vcpkg/installed/x64-linux/share/freeglut")
-
-# 使用 vcpkg 的官方 toolchain
-# 这在命令行里 -DCMAKE_TOOLCHAIN_FILE=... 即可
-# 不要再 append "/usr/local" 到 CMAKE_PREFIX_PATH，以免冲突
-# list(APPEND CMAKE_PREFIX_PATH "/usr/local")   # <-- 建议删除
 
 # ====================== CUDA 架构设置 ======================
 find_package(CUDAToolkit REQUIRED)
@@ -33,10 +24,13 @@ message(STATUS "Building for CUDA architectures: ${CUDA_ARCHITECTURES}")
 message(STATUS "CMake Build Type: ${CMAKE_BUILD_TYPE}")
 
 # ====================== 第三方库查找 ======================
-# 全部使用 vcpkg 提供的 config 模式，若找不到则会抛错
+find_package(OpenVDB CONFIG REQUIRED)
+find_package(blosc CONFIG REQUIRED)
+find_package(TBB CONFIG REQUIRED)
+find_package(ZLIB REQUIRED)  # 如果需要
 find_package(Eigen3 CONFIG REQUIRED)
 find_package(GLEW CONFIG REQUIRED)
-# find_package(freeglut CONFIG REQUIRED)  # 关键：需要链接 freeglut::freeglut
+# find_package(freeglut CONFIG REQUIRED)  # 如需使用freeglut就取消注释
 find_package(OpenGL REQUIRED)
 find_package(OpenMP REQUIRED)
 find_package(Boost CONFIG REQUIRED)
@@ -77,9 +71,6 @@ target_compile_definitions(${library_name} PRIVATE
     USE_SNK
     USE_GIPCFRICTION
     USE_DOUBLE_PRECISION
-    # GPUIPC_ANIMATION
-    # GPUIPC_DRAG
-    # GPUIPC_HTTP
     GPUIPC_DEFORMER
 )
 
@@ -94,16 +85,23 @@ target_link_libraries(${library_name} PRIVATE
     CUDA::cuda_driver 
     CUDA::cudart
 
-    # OpenGL & freeglut
-    # freeglut::freeglut
+    # OpenGL & GLEW
     GLEW::GLEW 
     OpenGL::GLU
+    # 如需freeglut，取消下行注释
+    # freeglut::freeglut
 
     # 其他
     Eigen3::Eigen
     Boost::boost
     CGAL::CGAL
     httplib::httplib
+
+    OpenVDB::openvdb
+    blosc_static
+    TBB::tbb
+    ZLIB::ZLIB  # 视情况而定
+    # 如果需要TBB，可再加 TBB::tbb
 )
 
 # 如果存在 OpenMP
