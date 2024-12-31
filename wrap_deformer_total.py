@@ -46,6 +46,7 @@ def polar_decomposition(m):
         U[:, -1] *= -1
         R = np.dot(U, Vt)
     return R
+
 def make_transform(z_vec, y_vec):
     """
     构造一个 3x3 旋转矩阵 (X, Y, Z) = (cross(Y, Z), Y, Z)。
@@ -95,7 +96,6 @@ def compute_rest_xform(mesh, pt_id, neighbors):
         # 权重：用 “两个邻居叉乘长度” 作为权重
         thisweight = np.linalg.norm(up)
         this_orient = make_transform(toneighbour, toprevious)
-
         ors_list.append(this_orient)
         weights_list.append(thisweight)
 
@@ -172,8 +172,7 @@ def barycentric_interpolate_matrix3(values, wuv):
     这里插值可能导致矩阵略偏离正交，需要在外部再做 polar_decomposition。
     """
     w, u, v = wuv
-    mat = values[0]*w + values[1]*u + values[2]*v
-    return mat
+    return values[0]*w + values[1]*u + values[2]*v
 
 
 # -----------------------------
@@ -430,6 +429,7 @@ if __name__ == "__main__":
         # dor
         dor_verts = all_dor[face_vids]  # shape (3, 3, 3)
         dor_final = barycentric_interpolate_matrix3(dor_verts, (w, v, u))
+        dor_final = polar_decomposition(dor_final)
 
         # ----------------
         # ds
